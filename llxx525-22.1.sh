@@ -1,382 +1,413 @@
-#!/usr/bin/env bash
-
-# ============================================================
-# LXX525 - LineageOS 22.1 Crave Build Script
-#
-# Usage:
-#   bash lxx525-22.1.sh first
-#   bash lxx525-22.1.sh update
-#
-# Or:
-#   BUILD_MODE=update bash lxx525-22.1.sh
-#
-# Environment:
-#   CLEAN_BUILD=yes    -> run installclean before building
-#   BUILD=yes          -> build after syncing (default: yes)
-# ============================================================
-
+#!/bin/bash
 set -Eeuo pipefail
 
-# -----------------------------
-# Configuration
-# -----------------------------
+# ============================================================
+# LXX525 LineageOS 22.1 - Crave Build Script
+#
+# Usage:
+#   bash lxx525.sh first
+#   bash lxx525.sh update
+#
+# Crave:
+#   crave run --no-patch -- \
+#     "bash lxx525.sh first"
+#
+# ============================================================
 
 DEVICE="LXX525"
-VENDOR="lava"
 BRANCH="lineage-22.1"
 LUNCH_TARGET="lineage_LXX525-ap3a-userdebug"
 
-DEVICE_DIR="device/${VENDOR}/${DEVICE}"
-VENDOR_DIR="vendor/${VENDOR}/${DEVICE}"
+DEVICE_DIR="device/lava/LXX525"
+KERNEL_DIR="device/lava/LXX525-kernel"
+VENDOR_DIR="vendor/lava/LXX525"
 
-DEVICE_REPO="https://github.com/eleve1n/android_device_lava_LXX525-lineage"
-VENDOR_REPO="https://github.com/eleve1n/android_vendor_lava_LXX525"
+DEPENDENCIES="${DEVICE_DIR}/lineage.dependencies"
 
-MODE="${BUILD_MODE:-${1:-first}}"
-CLEAN_BUILD="${CLEAN_BUILD:-yes}"
-BUILD="${BUILD:-yes}"
+MODE="${1:-update}"
 
-LOG_DIR="${ANDROID_BUILD_TOP:-$PWD}/build-logs"
+START_TIME=$(date +%s)
+START_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+
+LOG_DIR="build-logs"
 mkdir -p "$LOG_DIR"
 
-LOG_FILE="${LOG_DIR}/lxx525-$(date '+%Y%m%d-%H%M%S').log"
-
-# -----------------------------
-# Logging
-# -----------------------------
+LOG_FILE="${LOG_DIR}/LXX525-$(date '+%Y%m%d-%H%M%S').log"
 
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-timestamp() {
-    date '+[%Y-%m-%d %H:%M:%S]'
+# ============================================================
+# Error handling
+# ============================================================
+
+on_error() {
+    local code=$?
+
+    echo
+    echo "============================================================"
+    echo " BUILD FAILED"
+    echo " Exit code : $code"
+    echo " Time      : $(date '+%Y-%m-%d %H:%M:%S')"
+    echo " Log       : $LOG_FILE"
+    echo "============================================================"
+
+    exit "$code"
 }
 
-log() {
-    echo "$(timestamp) $*"
-}
+trap on_error ERR
 
-die() {
-    log "ERROR: $*"
-    exit 1
-}
+# ============================================================
+# Header
+# ============================================================
 
-trap 'die "Command failed at line $LINENO: $BASH_COMMAND"' ERR
+echo
+echo "============================================================"
+echo " LXX525 - LineageOS 22.1"
+echo "============================================================"
+echo " Device    : $DEVICE"
+echo " Branch    : $BRANCH"
+echo " Target    : $LUNCH_TARGET"
+echo " Mode      : $MODE"
+echo " Started   : $START_DATE"
+echo "============================================================"
+echo
 
-# -----------------------------
-# Basic checks
-# -----------------------------
-
-log "=============================================="
-log " LXX525 LineageOS 22.1 Build"
-log "=============================================="
-log "Mode:          $MODE"
-log "Device:        $DEVICE"
-log "Branch:        $BRANCH"
-log "Lunch target:  $LUNCH_TARGET"
-log "Log:           $LOG_FILE"
-log "=============================================="
+# ============================================================
+# Validate mode
+# ============================================================
 
 case "$MODE" in
     first|update)
         ;;
     *)
-        die "Invalid mode: $MODE (use 'first' or 'update')"
+        echo "Usage:"
+        echo "  $0 first"
+        echo "  $0 update"
+        exit 1
         ;;
 esac
 
-command -v git >/dev/null 2>&1 || die "git is not installed"
-command -v python3 >/dev/null 2>&1 || die "python3 is required"
+# ============================================================
+# Validate Android source tree
+# ============================================================
 
-if [[ ! -f "build/envsetup.sh" ]]; then
-    die "This does not look like an Android source tree."
+if [[ ! -d ".repo" || ! -d "build" ]]; then
+    echo "ERROR: Not an Android source tree."
+    echo "Run this script from the LineageOS source directory."
+    exit 1
 fi
 
-# -----------------------------
-# Git helpers
-# -----------------------------
+# ============================================================
+# Repository helper
+# ============================================================
 
-clone_repo() {
-    local repo="$1"
-    local branch="$2"
-    local path="$3"
+sync_repo() {
+    local URL="$1"
+    local BRANCH_NAME="$2"
+    local DEST="$3"
 
-    log "Cloning $repo"
-    log "Branch: $branch"
-    log "Path:   $path"
-
-    mkdir -p "$(dirname "$path")"
-
-    git clone \
-        --depth 1 \
-        --single-branch \
-        -b "$branch" \
-        "$repo" \
-        "$path"
-}
-
-update_repo() {
-    local path="$1"
-
-    if [[ ! -d "$path/.git" ]]; then
-        return 1
-    fi
-
-    log "Updating: $path"
-
-    git -C "$path" fetch \
-        --depth 1 \
-        origin
-
-    # Keep the existing branch when possible.
-    local branch
-    branch="$(git -C "$path" symbolic-ref --short HEAD 2>/dev/null || true)"
-
-    if [[ -n "$branch" ]]; then
-        git -C "$path" reset --hard "origin/$branch"
-    else
-        log "WARNING: Could not determine branch for $path"
-    fi
-
-    git -C "$path" clean -fd
-}
-
-# -----------------------------
-# Device/vendor trees
-# -----------------------------
-
-prepare_main_trees() {
+    echo
+    echo "------------------------------------------------------------"
+    echo "Repository"
+    echo " URL    : $URL"
+    echo " Branch : $BRANCH_NAME"
+    echo " Path   : $DEST"
+    echo "------------------------------------------------------------"
 
     if [[ "$MODE" == "first" ]]; then
 
-        log "Fresh setup requested."
+        rm -rf "$DEST"
 
-        log "Removing old device/vendor trees..."
-        rm -rf "$DEVICE_DIR"
-        rm -rf "$VENDOR_DIR"
-
-        clone_repo \
-            "$DEVICE_REPO" \
-            "$BRANCH" \
-            "$DEVICE_DIR"
-
-        clone_repo \
-            "$VENDOR_REPO" \
-            "$BRANCH" \
-            "$VENDOR_DIR"
+        git clone \
+            --depth 1 \
+            -b "$BRANCH_NAME" \
+            "$URL" \
+            "$DEST"
 
     else
 
-        log "Update setup requested."
+        if [[ -d "$DEST/.git" ]]; then
 
-        if ! update_repo "$DEVICE_DIR"; then
-            log "Device tree not found. Cloning it..."
-            clone_repo \
-                "$DEVICE_REPO" \
-                "$BRANCH" \
-                "$DEVICE_DIR"
-        fi
+            git -C "$DEST" fetch \
+                --depth 1 \
+                origin "$BRANCH_NAME"
 
-        if ! update_repo "$VENDOR_DIR"; then
-            log "Vendor tree not found. Cloning it..."
-            clone_repo \
-                "$VENDOR_REPO" \
-                "$BRANCH" \
-                "$VENDOR_DIR"
-        fi
-    fi
-}
+            git -C "$DEST" checkout -B "$BRANCH_NAME" \
+                "origin/$BRANCH_NAME"
 
-# -----------------------------
-# lineage.dependencies support
-# -----------------------------
+            git -C "$DEST" reset --hard \
+                "origin/$BRANCH_NAME"
 
-process_dependencies() {
-
-    log "=============================================="
-    log " Checking lineage.dependencies"
-    log "=============================================="
-
-    local dependency_files=()
-
-    [[ -f "$DEVICE_DIR/lineage.dependencies" ]] && \
-        dependency_files+=("$DEVICE_DIR/lineage.dependencies")
-
-    [[ -f "$VENDOR_DIR/lineage.dependencies" ]] && \
-        dependency_files+=("$VENDOR_DIR/lineage.dependencies")
-
-    if [[ ${#dependency_files[@]} -eq 0 ]]; then
-        log "No lineage.dependencies found."
-        log "No additional repositories detected automatically."
-        return 0
-    fi
-
-    for depfile in "${dependency_files[@]}"; do
-
-        log "Reading: $depfile"
-
-        python3 - "$depfile" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-
-with open(path, "r", encoding="utf-8") as f:
-    data = json.load(f)
-
-for dep in data:
-    repo = dep.get("repository", "")
-    target = dep.get("target_path", "")
-    branch = dep.get("branch", "")
-
-    if not repo or not target:
-        continue
-
-    print(
-        repo.replace("https://github.com/", "").replace(".git", ""),
-        "|",
-        target,
-        "|",
-        branch
-    )
-PY
-
-    done | while IFS='|' read -r repo target branch; do
-
-        repo="$(echo "$repo" | xargs)"
-        target="$(echo "$target" | xargs)"
-        branch="$(echo "$branch" | xargs)"
-
-        [[ -z "$repo" ]] && continue
-        [[ -z "$target" ]] && continue
-
-        # Default to the main Lineage branch when the dependency
-        # does not specify one.
-        if [[ -z "$branch" ]]; then
-            branch="$BRANCH"
-        fi
-
-        # Normalize github repositories.
-        if [[ "$repo" != https://* ]]; then
-            repo="https://github.com/${repo}"
-        fi
-
-        log "Dependency detected:"
-        log "  Repository: $repo"
-        log "  Target:     $target"
-        log "  Branch:     $branch"
-
-        if [[ -d "$target/.git" ]]; then
-
-            if [[ "$MODE" == "update" ]]; then
-                update_repo "$target" || \
-                    log "WARNING: Could not update $target"
-            else
-                log "Dependency already exists: $target"
-            fi
-
-        elif [[ -e "$target" ]]; then
-
-            log "WARNING: $target exists but is not a Git repository."
-            log "Skipping automatic clone."
+            git -C "$DEST" clean -fd
 
         else
 
-            clone_repo \
-                "$repo" \
-                "$branch" \
-                "$target"
-        fi
+            rm -rf "$DEST"
 
-    done
+            git clone \
+                --depth 1 \
+                -b "$BRANCH_NAME" \
+                "$URL" \
+                "$DEST"
+
+        fi
+    fi
 }
 
-# -----------------------------
-# Setup
-# -----------------------------
+# ============================================================
+# Device tree
+# ============================================================
 
-prepare_main_trees
-process_dependencies
+sync_repo \
+    "https://github.com/eleve1n/android_device_lava_LXX525-lineage.git" \
+    "$BRANCH" \
+    "$DEVICE_DIR"
 
-# -----------------------------
-# Verify important files
-# -----------------------------
+# ============================================================
+# Read lineage.dependencies
+# ============================================================
 
-log "=============================================="
-log " Verifying device tree"
-log "=============================================="
-
-if [[ ! -d "$DEVICE_DIR" ]]; then
-    die "Device tree missing: $DEVICE_DIR"
+if [[ ! -f "$DEPENDENCIES" ]]; then
+    echo "ERROR: lineage.dependencies not found:"
+    echo "$DEPENDENCIES"
+    exit 1
 fi
 
-if [[ ! -d "$VENDOR_DIR" ]]; then
-    die "Vendor tree missing: $VENDOR_DIR"
+echo
+echo "============================================================"
+echo " Detecting dependencies"
+echo "============================================================"
+
+python3 <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+dep_file = "device/lava/LXX525/lineage.dependencies"
+
+with open(dep_file, "r", encoding="utf-8") as f:
+    deps = json.load(f)
+
+custom = {
+    "android_device_lava_LXX525-kernel":
+        "https://github.com/eleve1n/android_device_lava_LXX525-kernel.git",
+
+    "android_vendor_lava_LXX525":
+        "https://github.com/eleve1n/android_vendor_lava_LXX525.git",
+}
+
+for dep in deps:
+
+    repo = dep.get("repository")
+    target = dep.get("target_path")
+    branch = dep.get("branch") or dep.get("revision")
+
+    if not repo or not target:
+        print("Skipping malformed dependency:", dep)
+        continue
+
+    if not branch:
+        branch = "lineage-22.1"
+
+    url = custom.get(
+        repo,
+        f"https://github.com/LineageOS/{repo}.git"
+    )
+
+    print()
+    print("Dependency:")
+    print("  Repository:", repo)
+    print("  Branch:    ", branch)
+    print("  Target:    ", target)
+    print("  URL:       ", url)
+
+    parent = os.path.dirname(target)
+
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    if os.path.isdir(os.path.join(target, ".git")):
+
+        print("  Action: UPDATE")
+
+        subprocess.run(
+            ["git", "-C", target, "fetch",
+             "--depth", "1", "origin", branch],
+            check=True
+        )
+
+        subprocess.run(
+            ["git", "-C", target, "checkout", "-B",
+             branch, f"origin/{branch}"],
+            check=True
+        )
+
+        subprocess.run(
+            ["git", "-C", target, "reset", "--hard",
+             f"origin/{branch}"],
+            check=True
+        )
+
+        subprocess.run(
+            ["git", "-C", target, "clean", "-fd"],
+            check=True
+        )
+
+    else:
+
+        print("  Action: CLONE")
+
+        if os.path.exists(target):
+            import shutil
+            shutil.rmtree(target)
+
+        subprocess.run(
+            ["git", "clone",
+             "--depth", "1",
+             "-b", branch,
+             url,
+             target],
+            check=True
+        )
+
+PY
+
+# ============================================================
+# Verify required directories
+# ============================================================
+
+echo
+echo "============================================================"
+echo " Verifying repositories"
+echo "============================================================"
+
+REQUIRED=(
+    "$DEVICE_DIR"
+    "$KERNEL_DIR"
+    "$VENDOR_DIR"
+    "hardware/mediatek"
+    "device/mediatek/sepolicy_vndr"
+)
+
+for DIR in "${REQUIRED[@]}"; do
+
+    if [[ -d "$DIR" ]]; then
+        echo "[OK] $DIR"
+    else
+        echo "[FAIL] Missing: $DIR"
+        exit 1
+    fi
+
+done
+
+# ============================================================
+# Verify PREBUILT kernel
+# ============================================================
+
+echo
+echo "============================================================"
+echo " Verifying prebuilt kernel"
+echo "============================================================"
+
+KERNEL_IMAGE="$KERNEL_DIR/Image"
+
+if [[ ! -f "$KERNEL_IMAGE" ]]; then
+    echo "ERROR: Prebuilt kernel Image not found:"
+    echo "$KERNEL_IMAGE"
+    exit 1
 fi
 
-log "Device tree: OK"
-log "Vendor tree: OK"
+echo "[OK] Prebuilt kernel:"
+echo "     $KERNEL_IMAGE"
 
-# -----------------------------
-# Android build environment
-# -----------------------------
+# Optional kernel directories
+if [[ -d "$KERNEL_DIR/dtb" ]]; then
+    echo "[OK] dtb directory found"
+else
+    echo "[WARN] dtb directory not found"
+fi
 
-log "=============================================="
-log " Loading Android build environment"
-log "=============================================="
+if [[ -d "$KERNEL_DIR/modules" ]]; then
+    echo "[OK] modules directory found"
+else
+    echo "[WARN] modules directory not found"
+fi
+
+# ============================================================
+# Build environment
+# ============================================================
+
+echo
+echo "============================================================"
+echo " Initializing build environment"
+echo "============================================================"
 
 source build/envsetup.sh
 
-log "Selecting lunch target:"
-log "$LUNCH_TARGET"
+# ============================================================
+# Lunch
+# ============================================================
+
+echo
+echo "============================================================"
+echo " Selecting target"
+echo "============================================================"
 
 lunch "$LUNCH_TARGET"
 
-# -----------------------------
+# ============================================================
 # Build cleanup
-# -----------------------------
+# ============================================================
 
-if [[ "$CLEAN_BUILD" == "yes" ]]; then
+echo
+echo "============================================================"
+echo " Cleaning previous build artifacts"
+echo "============================================================"
 
-    log "=============================================="
-    log " Running installclean"
-    log "=============================================="
+m installclean
 
-    # installclean is much less destructive than 'm clean'
-    # and is appropriate when rebuilding after source changes.
-    m installclean
-fi
-
-# -----------------------------
+# ============================================================
 # Build
-# -----------------------------
+# ============================================================
 
-if [[ "$BUILD" == "yes" ]]; then
+echo
+echo "============================================================"
+echo " Starting ROM build"
+echo "============================================================"
+echo
+echo "Target: $LUNCH_TARGET"
+echo
 
-    log "=============================================="
-    log " Starting ROM build"
-    log "=============================================="
+m bacon
 
-    log "Target: $LUNCH_TARGET"
-    log "Command: m bacon"
+# ============================================================
+# Result
+# ============================================================
 
-    START_TIME=$(date +%s)
+END_TIME=$(date +%s)
+ELAPSED=$((END_TIME - START_TIME))
 
-    m bacon
+OUT="out/target/product/$DEVICE"
 
-    END_TIME=$(date +%s)
-    ELAPSED=$((END_TIME - START_TIME))
+echo
+echo "============================================================"
+echo " BUILD SUCCESSFUL"
+echo "============================================================"
+echo " Device    : $DEVICE"
+echo " Target    : $LUNCH_TARGET"
+echo " Duration  : ${ELAPSED}s"
+echo " Log       : $LOG_FILE"
+echo
 
-    log "=============================================="
-    log " BUILD SUCCESSFUL"
-    log "=============================================="
-    log "Build time: ${ELAPSED} seconds"
-
-else
-
-    log "BUILD=no - source preparation completed."
+if [[ -d "$OUT" ]]; then
+    echo "Output files:"
+    find "$OUT" -maxdepth 1 -type f \
+        \( -name "*.zip" -o -name "*.img" -o -name "*.json" \) \
+        -printf "  %f\n" 2>/dev/null || true
 fi
 
-log "Log saved to:"
-log "$LOG_FILE"
-
-exit 0
+echo
+echo "============================================================"
+echo " DONE"
+echo "============================================================"

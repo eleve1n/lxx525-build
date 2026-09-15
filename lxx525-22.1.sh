@@ -32,7 +32,7 @@ MODE="${1:-update}"
 
 MANIFEST_REPO="https://github.com/eleve1n/local_manifests.git"
 MANIFEST_BRANCH="main"
-MANIFEST_FILE="local_manifests"
+MANIFEST_FILE="local_manifests.xml"
 
 # Set UPLOAD=1 to create/update a GitHub Release.
 UPLOAD="${UPLOAD:-0}"

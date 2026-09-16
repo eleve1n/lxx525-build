@@ -26,6 +26,16 @@ DEPENDENCIES="${DEVICE_DIR}/lineage.dependencies"
 
 MODE="${1:-update}"
 
+
+
+# SYNC SOURCE
+########################################
+
+echo "==> Syncing source..."
+/opt/crave/resync.sh
+/opt/crave/resync.sh
+/opt/crave/resync.sh
+
 # ============================================================
 # GitHub / local manifest
 # ============================================================

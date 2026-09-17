@@ -27,7 +27,6 @@ BRANCH="lineage-22.1"
 LUNCH_TARGET="lineage_LXX525-ap3a-userdebug"
 
 DEVICE_DIR="device/lava/LXX525"
-KERNEL_DIR="device/lava/LXX525-kernel"
 VENDOR_DIR="vendor/lava/LXX525"
 
 MODE="${1:-update}"
@@ -172,7 +171,8 @@ echo "============================================================"
 
 REQUIRED=(
     "$DEVICE_DIR"
-    "$KERNEL_DIR"
+    "$DEVICE_DIR/prebuilt/kernel"
+    "$DEVICE_DIR/prebuilt/dtb"
     "$VENDOR_DIR"
     "hardware/mediatek"
     "device/mediatek/sepolicy_vndr"
@@ -184,19 +184,15 @@ for DIR in "${REQUIRED[@]}"; do
         echo "[OK] $DIR"
     else
         echo "[FAIL] Missing: $DIR"
-        if [[ "$DIR" == "$KERNEL_DIR" ]]; then
+        if [[ "$DIR" == "$DEVICE_DIR/prebuilt/kernel" ]]; then
             echo
-            echo "The prebuilt kernel repository is missing."
-            echo "Create https://github.com/eleve1n/android_device_lava_LXX525-kernel"
-            echo "on branch 'lineage-22.1' containing:"
-            echo "  Image        (from your stock boot.img)"
-            echo "  dtb/         (device tree blobs)"
-            echo "  modules/     (vendor kernel modules, .ko files)"
-            echo "then add it to the local manifest:"
-            echo "  <project path=\"$KERNEL_DIR\""
-            echo "           name=\"eleve1n/android_device_lava_LXX525-kernel\""
-            echo "           remote=\"gh\""
-            echo "           revision=\"lineage-22.1\" />"
+            echo "The prebuilt kernel image is missing from the device tree."
+            echo "Expected: $DEVICE_DIR/prebuilt/kernel"
+        elif [[ "$DIR" == "$DEVICE_DIR/prebuilt/dtb" ]]; then
+            echo
+            echo "The prebuilt DTB directory is missing from the device tree."
+            echo "Expected: $DEVICE_DIR/prebuilt/dtb"
+            echo "Upload the split .dtb file(s) there."
         fi
         exit 1
     fi
@@ -212,7 +208,7 @@ echo "============================================================"
 echo " Verifying prebuilt kernel"
 echo "============================================================"
 
-KERNEL_IMAGE="$KERNEL_DIR/Image"
+KERNEL_IMAGE="$DEVICE_DIR/prebuilt/kernel"
 
 if [[ ! -f "$KERNEL_IMAGE" ]]; then
     echo "ERROR: Prebuilt kernel Image not found:"
@@ -224,16 +220,10 @@ echo "[OK] Prebuilt kernel:"
 echo "     $KERNEL_IMAGE"
 
 # Optional kernel directories
-if [[ -d "$KERNEL_DIR/dtb" ]]; then
-    echo "[OK] dtb directory found"
+if [[ -n "$(ls -A "$DEVICE_DIR/prebuilt/dtb" 2>/dev/null)" ]]; then
+    echo "[OK] dtb directory has files"
 else
-    echo "[WARN] dtb directory not found"
-fi
-
-if [[ -d "$KERNEL_DIR/modules" ]]; then
-    echo "[OK] modules directory found"
-else
-    echo "[WARN] modules directory not found"
+    echo "[WARN] dtb directory is empty"
 fi
 
 # ============================================================
@@ -403,7 +393,6 @@ generate_release() {
         }
 
         add_git_log "Device Tree" "$DEVICE_DIR"
-        add_git_log "Kernel" "$KERNEL_DIR"
         add_git_log "Vendor" "$VENDOR_DIR"
 
         echo "## Checksums"

@@ -5,13 +5,21 @@ set -Eeuo pipefail
 # LXX525 LineageOS 22.1 - Crave Build Script
 #
 # Usage:
-#   bash lxx525.sh first
-#   bash lxx525.sh update
+#   bash lxx525-22.1.sh update
 #
 # Crave:
 #   crave run --no-patch -- \
-#     "bash lxx525.sh first"
+#     "curl -fsSL https://raw.githubusercontent.com/eleve1n/lxx525-build/main/lxx525-22.1.sh | bash -s -- update"
 #
+# NOTE: All device repositories are synced by the LOCAL MANIFEST
+# (eleve1n/local_manifests) via `repo sync`. This script does NOT
+# manually clone anything — manual clones conflict with
+# repo-managed checkouts ("unsupported checkout state" /
+# "'origin' does not appear to be a git repository").
+#
+# The kernel repo (eleve1n/android_device_lava_LXX525-kernel)
+# must exist on branch lineage-22.1 and be listed in the local
+# manifest before this build can produce a boot image.
 # ============================================================
 
 DEVICE="LXX525"
@@ -22,18 +30,13 @@ DEVICE_DIR="device/lava/LXX525"
 KERNEL_DIR="device/lava/LXX525-kernel"
 VENDOR_DIR="vendor/lava/LXX525"
 
-DEPENDENCIES="${DEVICE_DIR}/lineage.dependencies"
-
 MODE="${1:-update}"
 
-
-
-# SYNC SOURCE
-########################################
+# ============================================================
+# Sync main LineageOS source (Crave cache)
+# ============================================================
 
 echo "==> Syncing source..."
-/opt/crave/resync.sh
-/opt/crave/resync.sh
 /opt/crave/resync.sh
 
 # ============================================================
@@ -122,63 +125,6 @@ if [[ ! -d ".repo" || ! -d "build" ]]; then
 fi
 
 # ============================================================
-# Repository helper
-# ============================================================
-
-sync_repo() {
-    local URL="$1"
-    local BRANCH_NAME="$2"
-    local DEST="$3"
-
-    echo
-    echo "------------------------------------------------------------"
-    echo "Repository"
-    echo " URL    : $URL"
-    echo " Branch : $BRANCH_NAME"
-    echo " Path   : $DEST"
-    echo "------------------------------------------------------------"
-
-    if [[ "$MODE" == "first" ]]; then
-
-        rm -rf "$DEST"
-
-        git clone \
-            --depth 1 \
-            -b "$BRANCH_NAME" \
-            "$URL" \
-            "$DEST"
-
-    else
-
-        if [[ -d "$DEST/.git" ]]; then
-
-            git -C "$DEST" fetch \
-                --depth 1 \
-                origin "$BRANCH_NAME"
-
-            git -C "$DEST" checkout -B "$BRANCH_NAME" \
-                "origin/$BRANCH_NAME"
-
-            git -C "$DEST" reset --hard \
-                "origin/$BRANCH_NAME"
-
-            git -C "$DEST" clean -fd
-
-        else
-
-            rm -rf "$DEST"
-
-            git clone \
-                --depth 1 \
-                -b "$BRANCH_NAME" \
-                "$URL" \
-                "$DEST"
-
-        fi
-    fi
-}
-
-# ============================================================
 # Local manifest
 # ============================================================
 
@@ -191,7 +137,6 @@ if ! command -v curl >/dev/null 2>&1; then
     echo "ERROR: curl is required to download the local manifest."
     exit 1
 fi
-
 mkdir -p ".repo/local_manifests"
 
 MANIFEST_URL="https://raw.githubusercontent.com/eleve1n/local_manifests/${MANIFEST_BRANCH}/${MANIFEST_FILE}"
@@ -207,126 +152,14 @@ echo "============================================================"
 echo " Syncing repositories from local manifest"
 echo "============================================================"
 
-repo sync     --force-sync     --no-clone-bundle     --no-tags     -j"$(nproc --all)"
+# -c = current branch only (faster)
+repo sync -c --force-sync --no-clone-bundle --no-tags -j"$(nproc --all)"
 
-# ============================================================
-# Device tree
-# ============================================================
-
-sync_repo \
-    "https://github.com/eleve1n/android_device_lava_LXX525-lineage.git" \
-    "$BRANCH" \
-    "$DEVICE_DIR"
-
-# ============================================================
-# Read lineage.dependencies
-# ============================================================
-
-if [[ ! -f "$DEPENDENCIES" ]]; then
-    echo "ERROR: lineage.dependencies not found:"
-    echo "$DEPENDENCIES"
-    exit 1
-fi
-
-echo
-echo "============================================================"
-echo " Detecting dependencies"
-echo "============================================================"
-
-python3 <<'PY'
-import json
-import os
-import subprocess
-import sys
-
-dep_file = "device/lava/LXX525/lineage.dependencies"
-
-with open(dep_file, "r", encoding="utf-8") as f:
-    deps = json.load(f)
-
-custom = {
-    "android_device_lava_LXX525-kernel":
-        "https://github.com/eleve1n/android_device_lava_LXX525-kernel.git",
-
-    "android_vendor_lava_LXX525":
-        "https://github.com/eleve1n/android_vendor_lava_LXX525.git",
-}
-
-for dep in deps:
-
-    repo = dep.get("repository")
-    target = dep.get("target_path")
-    branch = dep.get("branch") or dep.get("revision")
-
-    if not repo or not target:
-        print("Skipping malformed dependency:", dep)
-        continue
-
-    if not branch:
-        branch = "lineage-22.1"
-
-    url = custom.get(
-        repo,
-        f"https://github.com/LineageOS/{repo}.git"
-    )
-
-    print()
-    print("Dependency:")
-    print("  Repository:", repo)
-    print("  Branch:    ", branch)
-    print("  Target:    ", target)
-    print("  URL:       ", url)
-
-    parent = os.path.dirname(target)
-
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-
-    if os.path.isdir(os.path.join(target, ".git")):
-
-        print("  Action: UPDATE")
-
-        subprocess.run(
-            ["git", "-C", target, "fetch",
-             "--depth", "1", "origin", branch],
-            check=True
-        )
-
-        subprocess.run(
-            ["git", "-C", target, "checkout", "-B",
-             branch, f"origin/{branch}"],
-            check=True
-        )
-
-        subprocess.run(
-            ["git", "-C", target, "reset", "--hard",
-             f"origin/{branch}"],
-            check=True
-        )
-
-        subprocess.run(
-            ["git", "-C", target, "clean", "-fd"],
-            check=True
-        )
-
-    else:
-
-        print("  Action: CLONE")
-
-        if os.path.exists(target):
-            import shutil
-            shutil.rmtree(target)
-
-        subprocess.run(
-            ["git", "clone",
-             "--depth", "1",
-             "-b", branch,
-             url,
-             target],
-            check=True
-        )
-
-PY
+# NOTE: Do NOT manually git-clone/fetch the device, vendor,
+# sepolicy or hardware repos here — they are owned by the
+# local manifest + repo sync. Manual management of these
+# directories causes checkout-state conflicts on the next
+# build.
 
 # ============================================================
 # Verify required directories
@@ -351,6 +184,20 @@ for DIR in "${REQUIRED[@]}"; do
         echo "[OK] $DIR"
     else
         echo "[FAIL] Missing: $DIR"
+        if [[ "$DIR" == "$KERNEL_DIR" ]]; then
+            echo
+            echo "The prebuilt kernel repository is missing."
+            echo "Create https://github.com/eleve1n/android_device_lava_LXX525-kernel"
+            echo "on branch 'lineage-22.1' containing:"
+            echo "  Image        (from your stock boot.img)"
+            echo "  dtb/         (device tree blobs)"
+            echo "  modules/     (vendor kernel modules, .ko files)"
+            echo "then add it to the local manifest:"
+            echo "  <project path=\"$KERNEL_DIR\""
+            echo "           name=\"eleve1n/android_device_lava_LXX525-kernel\""
+            echo "           remote=\"gh\""
+            echo "           revision=\"lineage-22.1\" />"
+        fi
         exit 1
     fi
 
@@ -433,7 +280,6 @@ echo "============================================================"
 echo
 echo "Target: $LUNCH_TARGET"
 echo
-
 m bacon
 
 # ============================================================
@@ -643,6 +489,9 @@ if [[ -d "$OUT" ]]; then
         \( -name "*.zip" -o -name "*.img" -o -name "*.json" \) \
         -printf "  %f\n" 2>/dev/null || true
 fi
+
+# Publish GitHub release (no-op when UPLOAD is not 1).
+generate_release "$OUT"
 
 echo
 echo "============================================================"

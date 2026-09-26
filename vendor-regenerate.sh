@@ -50,6 +50,18 @@ detect_fs() {  # $1=image -> prints "erofs" or "ext4" or "unknown"
     esac
 }
 
+ensure_7zz() {
+    # Downloads a static 7-Zip: no root, no installation needed.
+    # 7-Zip 24.05+ can extract both ext4 AND erofs disk images.
+    if [ -x /tmp/lxx525-7zz/7zz ]; then return 0; fi
+    echo "--> downloading static 7-Zip 24.08 (no root required)..."
+    ( mkdir -p /tmp/lxx525-7zz && cd /tmp/lxx525-7zz && \
+        curl -fsSL -o 7z.tar.xz \
+          "https://github.com/ip7z/7zip/releases/download/24.08/7z2408-linux-x64.tar.xz" && \
+        tar xf 7z.tar.xz && test -x 7zz ) || return 1
+    [ -x /tmp/lxx525-7zz/7zz ]
+}
+
 extract_img() {  # $1=image  $2=destination dir
     local img="$1" dest="$2"
     mkdir -p "$dest"
@@ -86,30 +98,29 @@ extract_img() {  # $1=image  $2=destination dir
         fi
     fi
 
-    # Method 3: old p7zip (ext4 only)
-    if command -v 7z >/dev/null 2>&1; then
-        echo "--> trying 7z (p7zip)..."
-        7z x -y -o"$dest" "$img" >/dev/null 2>&1 || true
+    # Method 3: static 7-Zip — the workhorse (no root needed, ext4 + erofs)
+    if ensure_7zz; then
+        echo "--> trying static 7zz..."
+        /tmp/lxx525-7zz/7zz x -y -o"$dest" "$img" >/dev/null 2>&1 || true
         if [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
-            echo "[OK] extracted via 7z"
+            echo "[OK] extracted via static 7zz"
             return 0
         fi
+    else
+        echo "--> static 7zz download failed"
     fi
 
-    # Method 4: new 7-Zip 24.05+ (supports EROFS) — install if possible
-    if ! command -v 7zz >/dev/null 2>&1; then
-        echo "--> installing 7zip (new, EROFS-capable)..."
-        apt-get install -y 7zip 2>&1 | tail -1 || true
-        echo "--> 7zz: $(command -v 7zz || echo 'not available')"
-    fi
-    if command -v 7zz >/dev/null 2>&1; then
-        echo "--> trying 7zz (7-Zip, EROFS-capable)..."
-        7zz x -y -o"$dest" "$img" >/dev/null 2>&1 || true
-        if [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
-            echo "[OK] extracted via 7zz"
-            return 0
+    # Method 4: any preinstalled 7z variants
+    for z in 7z 7zz; do
+        if command -v "$z" >/dev/null 2>&1; then
+            echo "--> trying $z..."
+            "$z" x -y -o"$dest" "$img" >/dev/null 2>&1 || true
+            if [ -n "$(ls -A "$dest" 2>/dev/null)" ]; then
+                echo "[OK] extracted via $z"
+                return 0
+            fi
         fi
-    fi
+    done
 
     echo "!! FAILED to extract $(basename "$img") with any method."
     echo "   Available tools: mount=$(command -v mount), fsck.erofs=$(command -v fsck.erofs || echo 'missing'), 7z=$(command -v 7z || echo 'missing')"
@@ -143,7 +154,7 @@ if [ -n "$GITHUB_TOKEN" ]; then
     echo "==> Pushing new vendor tree to GitHub..."
     cd "$SRC/vendor/lava/LXX525"
     git config user.name  "eleve1n"
-    git config user.email "hdhehdh21@gmail.com"
+    git config user.email "novacustomizer2004@gmail.com"
     git add -A
     git commit -qm "Regenerate vendor tree with extract-utils (module-based)" || true
     git push --force \

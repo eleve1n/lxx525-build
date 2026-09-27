@@ -1,0 +1,5 @@
+cat << 'EOF' > /crave-devspaces/LOS/crave.yaml
+base: ubuntu:22.04
+run:
+  - bash build_rom.sh
+EOF

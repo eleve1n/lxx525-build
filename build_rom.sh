@@ -1,17 +1,16 @@
 #!/bin/bash
 set -e
 
-# Navigate to workspace root
 cd /crave-devspaces/LOS
 
-# Clean build output artifacts (without deleting source trees)
-make installclean
-
-# Initialize environment
+# 1. Initialize environment first
 source build/envsetup.sh
 
-# Select target
+# 2. Select target product
 lunch lineage_LXX525-ap3a-userdebug
 
-# Execute build
+# 3. Clean targets using mka (which supports env setup)
+mka installclean
+
+# 4. Start compilation
 mka bacon
